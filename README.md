@@ -4,7 +4,8 @@ Snap packaging for [Silo Server](https://github.com/Silo-Server/silo-server), a
 self-hosted media server with a web interface and Jellyfin-compatible APIs.
 
 The snap includes PostgreSQL 18 with pgvector, Jellyfin FFmpeg 8, libvips and
-Node.js 24. It runs with strict confinement on core24 and currently supports amd64.
+Node.js 24. It runs with strict confinement on core24. The build recipe targets
+amd64 and arm64.
 
 ## Install from the Snap Store
 
@@ -20,6 +21,14 @@ PostgreSQL starts automatically; no separate database installation is needed.
 
 Edge builds track upstream `main` and may contain breaking changes. Back up your
 data before updating.
+
+### ARM64 and Raspberry Pi
+
+ARM64 builds require a 64-bit operating system with snapd; 32-bit Raspberry Pi OS
+is not supported. On a Raspberry Pi, use clients that can play your media directly
+to avoid video transcoding. ARM64 package availability does not imply Raspberry
+Pi hardware acceleration: [Jellyfin has deprecated Raspberry Pi hardware
+transcoding support](https://jellyfin.org/docs/general/post-install/transcoding/hardware-acceleration/#raspberry-pi-hardware-acceleration-support-deprecation).
 
 ## Configuration
 
@@ -124,6 +133,10 @@ cd silo-server-snap
 snapcraft --use-lxd
 ```
 
+Builds run natively on their target architecture: use an amd64 host for amd64 or
+an arm64 host for arm64. The Snapcraft build service can build both platforms
+declared in `snap/snapcraft.yaml` on its corresponding builders.
+
 The recipe fetches upstream `main`, builds Silo and its embedded web interface,
 and records the source commit in the snap version and
 `usr/share/doc/silo-server/upstream-revision`. It uses the official PGDG and
@@ -132,12 +145,13 @@ Jellyfin apt repositories for runtime dependencies.
 Install the resulting local snap using its filename:
 
 ```sh
-sudo snap install ./silo-server_<version>_amd64.snap --dangerous
+sudo snap install ./silo-server_<version>_<architecture>.snap --dangerous
 sudo snap connect silo-server:removable-media
 ```
 
-Replace `<version>` with the version printed by Snapcraft. Snapcraft caches
-sources between builds; to fetch a newer upstream commit, clean Silo's part:
+Replace `<version>` with the version printed by Snapcraft and `<architecture>`
+with `amd64` or `arm64`. Snapcraft caches sources between builds; to fetch a newer
+upstream commit, clean Silo's part:
 
 ```sh
 snapcraft clean silo --use-lxd

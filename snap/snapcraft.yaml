@@ -17,9 +17,10 @@ source-code: https://github.com/Silo-Server/silo-server
 issues: https://github.com/Silo-Server/silo-server/issues
 assumes: [snapd2.61]
 
-# Start with the native amd64 build; add other architectures after testing.
+# Build natively on each architecture: Silo uses CGO and the web build runs Node.
 platforms:
   amd64:
+  arm64:
 
 system-usernames:
   _daemon_: shared
@@ -92,7 +93,9 @@ hooks:
 parts:
   node:
     plugin: dump
-    source: https://nodejs.org/download/release/v24.22.2/node-v24.22.2-linux-x64.tar.xz
+    source:
+      - on amd64: https://nodejs.org/download/release/v24.22.2/node-v24.22.2-linux-x64.tar.xz
+      - on arm64: https://nodejs.org/download/release/v24.22.2/node-v24.22.2-linux-arm64.tar.xz
     source-type: tar
     organize:
       bin: usr/bin
