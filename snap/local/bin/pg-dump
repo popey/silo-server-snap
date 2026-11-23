@@ -1,0 +1,14 @@
+#!/bin/bash
+set -euo pipefail
+# shellcheck source=snap/local/lib/common.sh
+source "$SNAP/lib/common.sh"
+if [[ "$(id -u)" != 0 ]]; then
+    echo 'Run with sudo: snap run silo-server.pg-dump [pg_dump options]' >&2
+    exit 1
+fi
+read_config
+validate_config
+database_environment
+# libpq accepts a connection URL in PGDATABASE. Keep passwords out of argv.
+export PGDATABASE="$DATABASE_URL"
+drop_privileges "$SNAP/usr/lib/postgresql/18/bin/pg_dump" "$@"

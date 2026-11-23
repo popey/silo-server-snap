@@ -1,0 +1,41 @@
+#!/bin/bash
+set -euo pipefail
+umask 077
+
+# Root owns the parents and the encryption key. Services own only their data.
+if [[ -L "$SNAP_COMMON/run" ]]; then
+    echo 'Refusing symlinked runtime directory' >&2
+    exit 1
+fi
+install -d -m 0755 "$SNAP_COMMON/run"
+service_uid="$(id -u _daemon_)"
+for dir in silo postgresql run/postgresql; do
+    target="$SNAP_COMMON/$dir"
+    if [[ -L "$target" ]]; then
+        echo "Refusing symlinked service directory: $target" >&2
+        exit 1
+    fi
+    if [[ ! -d "$target" ]]; then
+        mkdir "$target"
+    fi
+    case "$(stat -c %u "$target")" in
+        0)
+            # Confined root cannot chmod after giving ownership away.
+            # In particular, do not combine these with install -d -o.
+            chmod 0750 "$target"
+            chown _daemon_:root "$target"
+            ;;
+        "$service_uid")
+            # Preserve existing data, including after an interrupted install.
+            ;;
+        *)
+            echo "Unexpected owner of service directory: $target" >&2
+            exit 1
+            ;;
+    esac
+done
+if [[ ! -e "$SNAP_COMMON/secret-key" ]]; then
+    openssl rand -base64 48 > "$SNAP_COMMON/secret-key.new"
+    chmod 0600 "$SNAP_COMMON/secret-key.new"
+    mv "$SNAP_COMMON/secret-key.new" "$SNAP_COMMON/secret-key"
+fi

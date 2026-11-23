@@ -1,0 +1,157 @@
+name: silo-server
+base: core24
+adopt-info: silo
+summary: Self-hosted media streaming with a web UI and Jellyfin-compatible APIs
+description: |
+  Silo organizes and streams your media collection through its web interface
+  and compatible clients. This development build tracks upstream main.
+
+  PostgreSQL with pgvector is bundled and runs on a private Unix socket.
+  An external PostgreSQL server can be selected with snap configuration.
+  Open http://localhost:8090 to complete setup after installation.
+grade: devel
+confinement: strict
+license: AGPL-3.0-or-later
+website: https://siloserver.org
+source-code: https://github.com/Silo-Server/silo-server
+issues: https://github.com/Silo-Server/silo-server/issues
+assumes: [snapd2.61]
+
+# Start with the native amd64 build; add other architectures after testing.
+platforms:
+  amd64:
+
+system-usernames:
+  _daemon_: shared
+
+package-repositories:
+  - type: apt
+    url: https://apt.postgresql.org/pub/repos/apt
+    suites: [noble-pgdg]
+    components: [main]
+    key-id: B97B0AFCAA1A47F044F244A07FCC7D46ACCC4CF8
+  - type: apt
+    url: https://repo.jellyfin.org/ubuntu
+    suites: [noble]
+    components: [main]
+    key-id: 4918AABC486CA052358D778D49023CD01DE21A7B
+
+environment:
+  PATH: $SNAP/usr/lib/postgresql/18/bin:$SNAP/usr/lib/jellyfin-ffmpeg:$SNAP/usr/bin:$SNAP/bin:$PATH
+  LD_LIBRARY_PATH: $SNAP/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR:$SNAP/usr/lib:$SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR
+  SSL_CERT_FILE: $SNAP/etc/ssl/certs/ca-certificates.crt
+  SSL_CERT_DIR: $SNAP/etc/ssl/certs
+  NODE_OPTIONS: --use-openssl-ca
+  FONTCONFIG_PATH: $SNAP/etc/fonts
+  FONTCONFIG_FILE: $SNAP/etc/fonts/fonts.conf
+  XDG_CACHE_HOME: $SNAP_COMMON/silo/cache
+  npm_config_cache: $SNAP_COMMON/silo/cache/npm
+  npm_config_prefix: $SNAP_COMMON/silo/node
+  LIBVA_DRIVERS_PATH: $SNAP/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/dri
+
+layout:
+  /var/lib/silo:
+    bind: $SNAP_COMMON/silo
+  /usr/share/postgresql:
+    bind: $SNAP/usr/share/postgresql
+  /usr/lib/postgresql:
+    bind: $SNAP/usr/lib/postgresql
+  /usr/lib/jellyfin-ffmpeg:
+    bind: $SNAP/usr/lib/jellyfin-ffmpeg
+  /usr/share/fonts:
+    bind: $SNAP/usr/share/fonts
+
+apps:
+  silo-server:
+    command: bin/silo-launch
+    daemon: simple
+    after: [postgres]
+    restart-condition: always
+    restart-delay: 10s
+    stop-timeout: 2m
+    plugs: [network, network-bind, removable-media, opengl]
+  postgres:
+    command: bin/postgres-launch
+    daemon: simple
+    restart-condition: on-failure
+    restart-delay: 10s
+    # SIGINT requests PostgreSQL's fast, clean shutdown (SIGTERM waits for clients).
+    stop-mode: sigint
+    stop-timeout: 2m
+    plugs: [network, network-bind]
+  pg-dump:
+    command: bin/pg-dump
+    plugs: [network]
+
+hooks:
+  install:
+    plugs: [network]
+  configure:
+    plugs: [network]
+
+parts:
+  node:
+    plugin: dump
+    source: https://nodejs.org/download/release/v24.22.2/node-v24.22.2-linux-x64.tar.xz
+    source-type: tar
+    organize:
+      bin: usr/bin
+      lib: usr/lib
+      share: usr/share
+      include: usr/include
+    stage:
+      - usr/bin
+      - usr/lib
+      - usr/share/doc
+      - LICENSE
+    stage-packages: [libstdc++6, libatomic1]
+
+  silo:
+    after: [node]
+    plugin: nil
+    source: https://github.com/Silo-Server/silo-server.git
+    source-type: git
+    source-branch: main
+    source-depth: 1
+    build-snaps: [go/1.27/stable]
+    build-packages: [build-essential, git, pkg-config, libvips-dev, ca-certificates]
+    build-environment:
+      - PATH: $CRAFT_STAGE/usr/bin:$PATH
+      - CGO_ENABLED: "1"
+      - GOPROXY: https://proxy.golang.org,direct
+    override-build: |
+      set -eu
+      revision="$(git rev-parse HEAD)"
+      craftctl set version="0+git.$(git show -s --format=%cd --date=format:%Y%m%d HEAD).$(git rev-parse --short=8 HEAD)"
+      # Follow the package manager declared by the fetched source revision.
+      manager="$(node -p 'require("./web/package.json").packageManager')"
+      case "$manager" in pnpm@*) ;; *) echo "Expected upstream pnpm packageManager" >&2; exit 1;; esac
+      npm install --prefix "$CRAFT_PART_BUILD/tooling" --no-audit --no-fund "$manager"
+      "$CRAFT_PART_BUILD/tooling/node_modules/.bin/pnpm" --dir web install --frozen-lockfile
+      "$CRAFT_PART_BUILD/tooling/node_modules/.bin/pnpm" --dir web run build
+      go mod download
+      mkdir -p "$CRAFT_PART_INSTALL/usr/bin" "$CRAFT_PART_INSTALL/usr/share/doc/silo-server"
+      go build -trimpath -ldflags "-s -w -X github.com/Silo-Server/silo-server/internal/buildinfo.revisionOverride=$revision -X github.com/Silo-Server/silo-server/internal/buildinfo.dirtyOverride=false" -o "$CRAFT_PART_INSTALL/usr/bin/silo" ./cmd/silo/
+      printf '%s\n' "$revision" > "$CRAFT_PART_INSTALL/usr/share/doc/silo-server/upstream-revision"
+      cp LICENSE "$CRAFT_PART_INSTALL/usr/share/doc/silo-server/"
+    stage-packages:
+      - libvips42t64
+      - ca-certificates
+      - jellyfin-ffmpeg8
+      - fonts-noto-core
+      - fontconfig
+      - git
+
+  postgres:
+    plugin: nil
+    # Keep the major fixed. Changing it requires a deliberate dump/restore migration.
+    stage-packages:
+      - postgresql-18
+      - postgresql-client-18
+      - postgresql-18-pgvector
+      - util-linux
+      - openssl
+
+  launchers:
+    plugin: dump
+    source: snap/local

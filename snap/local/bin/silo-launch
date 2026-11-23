@@ -1,0 +1,42 @@
+#!/bin/bash
+set -euo pipefail
+# shellcheck source=snap/local/lib/common.sh
+source "$SNAP/lib/common.sh"
+
+if [[ "$(id -u)" == 0 ]]; then
+    read_config
+    validate_config
+    SECRET_KEY="$(cat "$SNAP_COMMON/secret-key")"
+    export SECRET_KEY
+    drop_privileges "$SNAP/bin/silo-launch" "$@"
+fi
+
+umask 077
+database_environment
+cd "$SNAP_COMMON/silo"
+mkdir -p cache plugins transcode downloads
+export SILO_PLUGIN_CACHE_DIR="$SNAP_COMMON/silo/plugins"
+export SILO_TRANSCODE_DIR="$SNAP_COMMON/silo/transcode"
+export SILO_DOWNLOAD_ARTIFACT_DIR="$SNAP_COMMON/silo/downloads"
+export SILO_FFMPEG_PATH="$SNAP/usr/lib/jellyfin-ffmpeg/ffmpeg"
+export MODE=integrated
+
+if [[ "$DATABASE_MODE" == bundled ]]; then
+    ready=false
+    for ((attempt=0; attempt<60; attempt++)); do
+        if psql -X -d postgres -Atqc 'SELECT 1' >/dev/null 2>&1; then
+            ready=true
+            break
+        fi
+        sleep 1
+    done
+    if [[ "$ready" != true ]]; then
+        echo 'Bundled PostgreSQL did not become ready; check snap logs silo-server.postgres' >&2
+        exit 1
+    fi
+    if [[ "$(psql -X -v ON_ERROR_STOP=1 -d postgres -Atqc "SELECT 1 FROM pg_database WHERE datname='silo'")" != 1 ]]; then
+        createdb --owner=silo silo
+    fi
+fi
+# Silo applies its embedded migrations before opening its HTTP listener.
+exec "$SNAP/usr/bin/silo" -env /dev/null "$@"

@@ -1,0 +1,9 @@
+#!/bin/bash
+set -euo pipefail
+# shellcheck source=snap/local/lib/common.sh
+source "$SNAP/lib/common.sh"
+read_config
+validate_config
+# snapd queues this until the hook succeeds, including during initial install.
+# The apps' after relation orders startup and reverses shutdown order.
+snapctl restart silo-server
